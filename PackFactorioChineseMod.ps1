@@ -7,7 +7,7 @@ $FilesToCopy = @("changelog.txt", "info.json", "LICENSE", "README.md", "thumbnai
 $BackupFolder = Join-Path $ScriptDir "模组备份"
 # ==========================================
 
-# 检查必要文件/文件夹是否存在
+# ---------- 检查必要文件/文件夹 ----------
 if (-not (Test-Path $ModInfoFolder)) {
     Write-Error "错误：在脚本目录下未找到 FactorioModInfo 文件夹"
     exit 1
@@ -21,7 +21,7 @@ if (-not (Test-Path $CfgSrcFolder)) {
     exit 1
 }
 
-# 读取 info.json 获取 name 和 version
+# ---------- 读取 info.json ----------
 try {
     $jsonContent = Get-Content -Path $InfoJsonPath -Raw -Encoding UTF8
     $jsonObj = $jsonContent | ConvertFrom-Json
@@ -44,16 +44,14 @@ $targetFolderName = "$name`_$version"
 $targetPath = Join-Path $ScriptDir $targetFolderName
 $targetLocalePath = Join-Path $targetPath "locale\zh-CN"
 
-# 如果目标文件夹已存在，先删除
+# ---------- 清理并重建目标文件夹 ----------
 if (Test-Path $targetPath) {
     Write-Host "目标文件夹已存在，正在删除旧版本..."
     Remove-Item -Path $targetPath -Recurse -Force
 }
-
-# 创建目标文件夹及其 locale\zh-CN 子目录
 New-Item -ItemType Directory -Path $targetLocalePath -Force | Out-Null
 
-# 复制 FactorioModCFG_zh 的全部内容到 locale\zh-CN（内部文件平铺）
+# ---------- 复制语言文件 ----------
 $cfgItems = Get-ChildItem -Path $CfgSrcFolder -Force
 foreach ($item in $cfgItems) {
     if ($item.PSIsContainer) {
@@ -64,7 +62,7 @@ foreach ($item in $cfgItems) {
 }
 Write-Host "已复制 FactorioModCFG_zh 内容到 $targetLocalePath"
 
-# 从 FactorioModInfo 文件夹复制指定文件到目标根目录
+# ---------- 复制其他文件 ----------
 foreach ($file in $FilesToCopy) {
     $srcFile = Join-Path $ModInfoFolder $file
     if (Test-Path $srcFile) {
@@ -75,20 +73,49 @@ foreach ($file in $FilesToCopy) {
     }
 }
 
-# 打包为 zip
+# ================== 打包为 ZIP（强制正斜杠分隔 + 顶层文件夹） ==================
 $zipPath = Join-Path $ScriptDir "$targetFolderName.zip"
 if (Test-Path $zipPath) {
     Remove-Item -Path $zipPath -Force
 }
-Compress-Archive -Path $targetPath -DestinationPath $zipPath -CompressionLevel Optimal
-Write-Host "已打包：$zipPath"
 
-# 创建备份文件夹（如果不存在）
+# ---------- 加载 .NET 压缩程序集 ----------
+try {
+    Add-Type -AssemblyName System.IO.Compression -ErrorAction Stop
+    Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop
+} catch {
+    Write-Error "无法加载 System.IO.Compression 程序集。您的 PowerShell 版本可能过低（需要 5.0+）或系统缺少 .NET Framework。"
+    Write-Error "建议安装 7-Zip 并改用以下命令打包："
+    Write-Error "  7z a -tzip `"$zipPath`" `"$targetPath`" -mx=9"
+    exit 1
+}
+
+# ---------- 创建 ZIP，每个条目添加顶层文件夹前缀 ----------
+$zipStream = [System.IO.File]::OpenWrite($zipPath)
+$zip = [System.IO.Compression.ZipArchive]::new($zipStream, [System.IO.Compression.ZipArchiveMode]::Create)
+
+$sourceDir = $targetPath
+$files = Get-ChildItem -Path $sourceDir -Recurse -File
+foreach ($file in $files) {
+    # 计算相对路径（不含顶层文件夹），并将 Windows 反斜杠替换为正斜杠
+    $relativePath = $file.FullName.Substring($sourceDir.Length + 1) -replace '\\', '/'
+    # 在条目名前添加顶层文件夹名称
+    $entryName = "$targetFolderName/$relativePath"
+    [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+        $zip,
+        $file.FullName,
+        $entryName,
+        [System.IO.Compression.CompressionLevel]::Optimal
+    )
+}
+$zip.Dispose()
+$zipStream.Dispose()
+Write-Host "已打包（包含顶层文件夹，正斜杠分隔）：$zipPath"
+
+# ================== 备份 ==================
 if (-not (Test-Path $BackupFolder)) {
     New-Item -ItemType Directory -Path $BackupFolder -Force | Out-Null
 }
-
-# 将目标文件夹移动到备份文件夹
 $backupTargetPath = Join-Path $BackupFolder $targetFolderName
 if (Test-Path $backupTargetPath) {
     Remove-Item -Path $backupTargetPath -Recurse -Force
