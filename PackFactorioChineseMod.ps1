@@ -40,6 +40,26 @@ try {
     exit 1
 }
 
+# ========== 新增：交互式版本号更新 ==========
+Write-Host "当前版本号: $version"
+$updateVersion = Read-Host "是否更新版本号？(Y/N)"
+if ($updateVersion -eq 'Y' -or $updateVersion -eq 'y') {
+    $newVersion = Read-Host "请输入新版本号 (格式如 1.2.3)"
+    if (-not [string]::IsNullOrWhiteSpace($newVersion)) {
+        $version = $newVersion
+        # 写回 info.json
+        $jsonObj.version = $version
+        $jsonObj | ConvertTo-Json -Depth 10 | Set-Content -Path $InfoJsonPath -Encoding UTF8
+        Write-Host "已更新 info.json 中的版本号为 $version"
+    } else {
+        Write-Warning "输入无效，保留原版本号 $version"
+    }
+} else {
+    Write-Host "保持原版本号不变"
+}
+# ===========================================
+
+# 使用最终版本号构建目标文件夹名
 $targetFolderName = "$name`_$version"
 $targetPath = Join-Path $ScriptDir $targetFolderName
 $targetLocalePath = Join-Path $targetPath "locale\zh-CN"
@@ -97,9 +117,7 @@ $zip = [System.IO.Compression.ZipArchive]::new($zipStream, [System.IO.Compressio
 $sourceDir = $targetPath
 $files = Get-ChildItem -Path $sourceDir -Recurse -File
 foreach ($file in $files) {
-    # 计算相对路径（不含顶层文件夹），并将 Windows 反斜杠替换为正斜杠
     $relativePath = $file.FullName.Substring($sourceDir.Length + 1) -replace '\\', '/'
-    # 在条目名前添加顶层文件夹名称
     $entryName = "$targetFolderName/$relativePath"
     [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
         $zip,
